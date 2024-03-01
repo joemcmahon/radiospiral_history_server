@@ -40,6 +40,27 @@ Empties the trash.
 
 Drops the "trash" table and recreates it. Returns the number of entries deleted.
 
+# Environment variables
+The server uses `dotenv` to load the environment variables. These are:
+
+ - `SECURE_PORT`: the port to use for the HTTPS endpoints.
+ - `INSECURE_PORT`: the port to use for the HTTP endpoints. Should not be used in production, obviously.
+ - `DBFILE`: the name of the file for the SQLite database.
+ - `PASSPHRASE` - the passphrase for the private key.
+
+`INSECURE_PORT` exists to allow developers to more easily test the server
+when running it locally.
+
+# Other scripts
+## check_passphrase.js
+Lets you verify that you've properly set up the SSL certs and that the
+passphrase can be fetched from the environment.
+## new_user.js
+Creates a `bcrypt` password hash for a user. Takes a username and password
+and writes the username and hash into the `auth` table of the database. The
+authentication still needs to be integrated, but this gets the username/password
+in place.
+
 # Future work
 We might at some point want to be able to recover records from the trash; at the moment, anything like
 that will have to be done by hand.
