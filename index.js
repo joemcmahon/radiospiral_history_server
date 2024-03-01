@@ -1,13 +1,62 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const bodyParser = require('body-parser');
+const jwt = require('jsonwebtoken');
 
 require('dotenv').config()
 
 const app = express();
-const PORT = process.env.PORT; // Choose the port you want to run the server on
+const INSECURE_PORT = process.env.INSECURE_PORT;
+const SECURE_PORT = process.env.SECURE_PORT;
 
 // Create a new SQLite database
 const db = new sqlite3.Database(process.env.DBFILE);
+
+// Read the private key file asynchronously
+fs.readFile('key.pem', 'utf8', (err, privateKey) => {
+    if (err) {
+        console.error('Error reading private key file:', err);
+        process.exit(1);
+    }
+    const passphrase = process.env.PASSPHRASE
+
+    // Start HTTPS server with correct passphrase
+    const options = {
+        key: privateKey,
+        passphrase: passphrase,
+        cert: fs.readFileSync('cert.pem') // Path to your certificate
+    };
+
+  var undef
+  var no_server = true
+  // Start HTTPS server
+  logToJson("Checking secure server")
+  if (SECURE_PORT !== undef) {
+    https.createServer(options, app).listen(SECURE_PORT, () => {
+        console.log(`Server is running on port ${SECURE_PORT}`);
+    });
+    no_server = false
+  } else {
+    logToJson("secure server not running")
+  }
+  // Start HTTP server
+  logToJson("Checking insecure server")
+  if (INSECURE_PORT !== undef) {
+    http.createServer(options, app).listen(INSECURE_PORT, () => {
+        console.log(`Server is running on port ${INSECURE_PORT}`);
+    });
+    no_server = false
+  } else {
+    logToJson("no insecure server running")
+  }
+  if (no_server) {
+    logToJson("NO SERVERS STARTED!")
+    return(1);
+  }
+});
 
 // JSON logging
 function logToJson(message) {
@@ -126,9 +175,4 @@ app.delete('/trash', (req, res) => {
             });
         });
     });
-});
-
-// Start the server
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
 });
