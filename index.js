@@ -69,37 +69,63 @@ app.get('/search', (req, res) => {
     logToJson("searched for" + field + "=" + value)
 });
 
-// Endpoint to move records to trash before a specified date
+// Endpoint to move records to trash before a specified number of days
 app.put('/cleanup', (req, res) => {
-    const { date } = req.query;
+    const { daysOld } = req.query;
 
-    let query = "INSERT INTO trash_records SELECT * FROM records WHERE timestamp < ?";
+    // Calculate the date that is the specified number of days ago from the current date
+    const date = new Date();
+    date.setDate(date.getDate() - parseInt(daysOld));
 
-    dropped = 0
-    db.run(query, [date], (err) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        dropped = this.changes
-        res.json({ "deleted": dropped});
+    let copyQuery = "INSERT INTO trash_records (artist, track, release, timestamp) SELECT artist, track, release, timestamp FROM records WHERE timestamp < ?";
+    let deleteQuery = "DELETE FROM records WHERE timestamp < ?";
+
+    db.serialize(() => {
+        db.run(copyQuery, [date.toISOString()], function(err) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            const recordsMoved = this.changes;
+
+            db.run(deleteQuery, [date.toISOString()], function(err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+                const recordsDeleted = this.changes;
+
+                res.json({ recordsMoved: recordsMoved, recordsDeleted: recordsDeleted });
+            });
+        });
     });
-    logToJson("trashed before" + date +": "+dropped)
 });
 
-// Endpoint to drop the trash table and recreate it
+// Endpoint to drop the trash table and return the count of records before deletion
 app.delete('/trash', (req, res) => {
-    let query = "DROP TABLE IF EXISTS trash_records";
+    let countQuery = "SELECT COUNT(*) AS count FROM trash_records";
+    let dropQuery = "DROP TABLE IF EXISTS trash_records";
+    let recreateQuery = "CREATE TABLE IF NOT EXISTS trash_records (id INTEGER PRIMARY KEY, artist TEXT, track TEXT, release TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)";
 
-    trashed = 0
-    db.run(query, (err) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        db.run("CREATE TABLE IF NOT EXISTS trash_records (id INTEGER PRIMARY KEY, artist TEXT, track TEXT, release TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)");
-        trashed = this.changes
-        res.json({ "trashed": trashed })
+    db.serialize(() => {
+        db.get(countQuery, function(err, row) {
+            if (err) {
+                return res.status(500).json({ error: err.message });
+            }
+            const recordsCount = row.count;
+
+            db.run(dropQuery, function(err) {
+                if (err) {
+                    return res.status(500).json({ error: err.message });
+                }
+
+                db.run(recreateQuery, function(err) {
+                    if (err) {
+                        return res.status(500).json({ error: err.message });
+                    }
+                    res.json({ recordsCount: recordsCount });
+                });
+            });
+        });
     });
-    logToJson("emptied trash: " + trashed)
 });
 
 // Start the server
