@@ -1,4 +1,5 @@
 const express = require('express');
+const bcrypt = require('bcrypt');
 const sqlite3 = require('sqlite3').verbose();
 const https = require('https');
 const http = require('http');
@@ -9,8 +10,12 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config()
 
 const app = express();
+app.use(bodyParser.json()); // for parsing application/json
+app.use(bodyParser.urlencoded({ extended: true })); // for parsing application/x-www-form-urlencoded
+
 const INSECURE_PORT = process.env.INSECURE_PORT;
 const SECURE_PORT = process.env.SECURE_PORT;
+const JWT_SECRET_KEY = process.env.JWT_SECRET_KEY;
 
 // Create a new SQLite database
 const db = new sqlite3.Database(process.env.DBFILE);
@@ -67,6 +72,24 @@ function logToJson(message) {
     console.log(JSON.stringify(log));
 }
 
+// Middleware to authenticate JWT token
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Extract token from Authorization header
+
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    jwt.verify(token, SECRET_KEY, (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+        req.user = user;
+        next(); // Proceed to the next middleware or route handler
+    });
+}
+
 // Create a table to store records
 db.serialize(() => {
     db.run("CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, artist TEXT, track TEXT, release TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)");
@@ -74,8 +97,35 @@ db.serialize(() => {
 });
 logToJson("starting")
 
+// Login endpoint
+app.post('/login', (req, res) => {
+    const { username, password } = req.body;
+
+    // Retrieve user from the database
+    db.get('SELECT * FROM auth WHERE username = ?', [username], (err, user) => {
+        if (err) {
+            console.error('Error retrieving user:', err);
+            return res.status(500).json({ error: 'Internal Server Error' });
+        }
+        if (!user) {
+            //return res.status(401).json({ error: 'Invalid username or password' });
+            return res.status(401).json({ error: 'Invalid username' });
+        }
+        // Verify password
+        bcrypt.compare(password, user.PASSWORD, (err, isMatch) => {
+            if (err || !isMatch) {
+                return res.status(401).json({ error: 'Invalid username or password' });
+            }
+
+            // Generate JWT token
+            const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET_KEY, { expiresIn: '2h' });
+            res.json({ token: token });
+        });
+    });
+});
+
 // Endpoint to save a record
-app.put('/played', (req, res) => {
+app.put('/played', authenticateToken, (req, res) => {
     const { artist, track, release } = req.query;
 
     db.run("INSERT INTO records (artist, track, release) VALUES (?, ?, ?)", [artist, track, release], (err) => {
@@ -88,7 +138,7 @@ app.put('/played', (req, res) => {
 });
 
 // Endpoint to retrieve records between two timestamps
-app.get('/played', (req, res) => {
+app.get('/played', authenticateToken, (req, res) => {
     const { start, end } = req.query;
 
     let query = "SELECT * FROM records WHERE timestamp >= ? AND timestamp <= ?";
@@ -104,7 +154,7 @@ app.get('/played', (req, res) => {
 });
 
 // Endpoint to search records by field
-app.get('/search', (req, res) => {
+app.get('/search', authenticateToken, (req, res) => {
     const { field, value } = req.query;
 
     let query = `SELECT * FROM records WHERE ${field} = ?`;
@@ -119,7 +169,7 @@ app.get('/search', (req, res) => {
 });
 
 // Endpoint to move records to trash before a specified number of days
-app.put('/cleanup', (req, res) => {
+app.put('/cleanup', authenticateToken, (req, res) => {
     const { daysOld } = req.query;
 
     // Calculate the date that is the specified number of days ago from the current date
@@ -149,7 +199,7 @@ app.put('/cleanup', (req, res) => {
 });
 
 // Endpoint to drop the trash table and return the count of records before deletion
-app.delete('/trash', (req, res) => {
+app.delete('/trash', authenticateToken, (req, res) => {
     let countQuery = "SELECT COUNT(*) AS count FROM trash_records";
     let dropQuery = "DROP TABLE IF EXISTS trash_records";
     let recreateQuery = "CREATE TABLE IF NOT EXISTS trash_records (id INTEGER PRIMARY KEY, artist TEXT, track TEXT, release TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)";
